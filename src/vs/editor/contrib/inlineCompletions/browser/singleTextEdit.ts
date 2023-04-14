@@ -37,29 +37,22 @@ export class SingleTextEdit {
 	 * 	If the text is `hello` and the suffix length is 2, the non-preview part is `hel` and the preview-part is `lo`.
 	*/
 	computeGhostText(
-		textModel: ITextModel,
+		model: ITextModel,
 		mode: 'prefix' | 'subword' | 'subwordSmart',
 		cursorPosition?: Position,
 		previewSuffixLength = 0
 	): GhostText | undefined {
-		let { range, text } = this;
+		let edit = this.removeCommonPrefix(model);
 
-		if (range.endLineNumber !== range.startLineNumber) {
-			// try to minimize
-			const textLines = text.split('\n');
-			const actualText = textModel.getValueInRange(new Range(range.startLineNumber, range.startColumn, range.endLineNumber - 1, Number.MAX_SAFE_INTEGER), EndOfLinePreference.LF);
-			if (textLines.slice(0, range.endLineNumber - range.startLineNumber).join('\n') !== actualText) {
-				// first lines don't agree -> don't show ghost text
-				return undefined;
-			}
-			text = textLines.slice(range.endLineNumber - range.startLineNumber).join('\n');
-			range = new Range(range.endLineNumber, 1, range.endLineNumber, range.endColumn);
+		if (edit.range.endLineNumber !== edit.range.startLineNumber) {
+			// This edit might span multiple lines, but the first lines must be a common prefix.
+			return undefined;
 		}
 
-		const sourceLine = textModel.getLineContent(range.startLineNumber);
+		const sourceLine = model.getLineContent(edit.range.startLineNumber);
 		const sourceIndentationLength = getLeadingWhitespace(sourceLine).length;
 
-		const suggestionTouchesIndentation = range.startColumn - 1 <= sourceIndentationLength;
+		const suggestionTouchesIndentation = edit.range.startColumn - 1 <= sourceIndentationLength;
 		if (suggestionTouchesIndentation) {
 			// source:      ··········[······abc]
 			//                         ^^^^^^^^^ inlineCompletion.range
@@ -70,36 +63,35 @@ export class SingleTextEdit {
 			// inlineCompletion.text: '··foo'
 			//                         ^^ suggestionAddedIndentationLength
 
-			const suggestionAddedIndentationLength = getLeadingWhitespace(text).length;
+			const suggestionAddedIndentationLength = getLeadingWhitespace(edit.text).length;
 
-			const replacedIndentation = sourceLine.substring(range.startColumn - 1, sourceIndentationLength);
+			const replacedIndentation = sourceLine.substring(edit.range.startColumn - 1, sourceIndentationLength);
 			const rangeThatDoesNotReplaceIndentation = Range.fromPositions(
-				range.getStartPosition().delta(0, replacedIndentation.length),
-				range.getEndPosition()
+				edit.range.getStartPosition().delta(0, replacedIndentation.length),
+				edit.range.getEndPosition()
 			);
 
 			const suggestionWithoutIndentationChange =
-				text.startsWith(replacedIndentation)
+				edit.text.startsWith(replacedIndentation)
 					// Adds more indentation without changing existing indentation: We can add ghost text for this
-					? text.substring(replacedIndentation.length)
+					? edit.text.substring(replacedIndentation.length)
 					// Changes or removes existing indentation. Only add ghost text for the non-indentation part.
-					: text.substring(suggestionAddedIndentationLength);
+					: edit.text.substring(suggestionAddedIndentationLength);
 
-			text = suggestionWithoutIndentationChange;
-			range = rangeThatDoesNotReplaceIndentation;
+			edit = new SingleTextEdit(rangeThatDoesNotReplaceIndentation, suggestionWithoutIndentationChange);
 		}
 
 		// This is a single line string
-		const valueToBeReplaced = textModel.getValueInRange(range);
+		const valueToBeReplaced = model.getValueInRange(edit.range);
 
-		const changes = cachingDiff(valueToBeReplaced, text);
+		const changes = cachingDiff(valueToBeReplaced, edit.text);
 
 		if (!changes) {
 			// No ghost text in case the diff would be too slow to compute
 			return undefined;
 		}
 
-		const lineNumber = range.startLineNumber;
+		const lineNumber = edit.range.startLineNumber;
 
 		const parts = new Array<GhostTextPart>();
 
@@ -111,12 +103,12 @@ export class SingleTextEdit {
 			}
 		}
 
-		const previewStartInCompletionText = text.length - previewSuffixLength;
+		const previewStartInCompletionText = edit.text.length - previewSuffixLength;
 
 		for (const c of changes) {
-			const insertColumn = range.startColumn + c.originalStart + c.originalLength;
+			const insertColumn = edit.range.startColumn + c.originalStart + c.originalLength;
 
-			if (mode === 'subwordSmart' && cursorPosition && cursorPosition.lineNumber === range.startLineNumber && insertColumn < cursorPosition.column) {
+			if (mode === 'subwordSmart' && cursorPosition && cursorPosition.lineNumber === edit.range.startLineNumber && insertColumn < cursorPosition.column) {
 				// No ghost text before cursor
 				return undefined;
 			}
@@ -131,8 +123,8 @@ export class SingleTextEdit {
 
 			const modifiedEnd = c.modifiedStart + c.modifiedLength;
 			const nonPreviewTextEnd = Math.max(c.modifiedStart, Math.min(modifiedEnd, previewStartInCompletionText));
-			const nonPreviewText = text.substring(c.modifiedStart, nonPreviewTextEnd);
-			const italicText = text.substring(nonPreviewTextEnd, Math.max(c.modifiedStart, modifiedEnd));
+			const nonPreviewText = edit.text.substring(c.modifiedStart, nonPreviewTextEnd);
+			const italicText = edit.text.substring(nonPreviewTextEnd, Math.max(c.modifiedStart, modifiedEnd));
 
 			if (nonPreviewText.length > 0) {
 				const lines = splitLines(nonPreviewText);
