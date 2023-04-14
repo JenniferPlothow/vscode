@@ -174,7 +174,7 @@ export class InlineCompletionsModel extends Disposable {
 
 			const augmentedCompletion = mapFind(candidateInlineCompletion, c => {
 				let r = c.toSingleTextEdit();
-				r = r.removeCommonPrefix(model);
+				r = r.removeCommonPrefix(model, Range.fromPositions(r.range.getStartPosition(), suggestItem.range.getEndPosition()));
 				return r.augments(suggestCompletion) ? r : undefined;
 			});
 

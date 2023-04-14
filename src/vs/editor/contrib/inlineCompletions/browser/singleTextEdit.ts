@@ -18,8 +18,12 @@ export class SingleTextEdit {
 	) {
 	}
 
-	removeCommonPrefix(model: ITextModel): SingleTextEdit {
-		const valueToReplace = model.getValueInRange(this.range, EndOfLinePreference.LF);
+	removeCommonPrefix(model: ITextModel, validModelRange?: Range): SingleTextEdit {
+		const modelRange = validModelRange ? this.range.intersectRanges(validModelRange) : this.range;
+		if (!modelRange) {
+			return this;
+		}
+		const valueToReplace = model.getValueInRange(modelRange, EndOfLinePreference.LF);
 		const commonPrefixLen = commonPrefixLength(valueToReplace, this.text);
 		const start = addPositions(this.range.getStartPosition(), lengthOfText(valueToReplace.substring(0, commonPrefixLen)));
 		const text = this.text.substring(commonPrefixLen);
